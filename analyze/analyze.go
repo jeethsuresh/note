@@ -2,28 +2,42 @@ package analyze
 
 import (
 	"database/sql"
-	"fmt"
 	"io/ioutil"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/gobuffalo/envy"
 )
 
+func userHome() string {
+	if h := strings.TrimSpace(os.Getenv("HOME")); h != "" {
+		return h
+	}
+	return strings.TrimSpace(envy.Get("HOME", ""))
+}
+
 func AnalyzeFile(currFile string) {
-	fmt.Println("******analyzing file")
-
 	tokens := tokenizeFile(currFile)
-
-	fmt.Println("********file tokenized")
 	fileMap := topicModelling(tokens)
-	fmt.Println("*********file mapped")
-	fmt.Printf("%+v\n", fileMap)
 	sendToDatabase(currFile, fileMap)
 }
 
+// DeleteTokensForDocument removes all token rows for a document slug (no .txt suffix).
+func DeleteTokensForDocument(document string) error {
+	dbPath := filepath.Join(userHome(), "notes", "note.db")
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	_, err = db.Exec(`DELETE FROM tokens WHERE document = ?`, document)
+	return err
+}
+
 func tokenizeFile(file string) (toreturn []string) {
-	content, err := ioutil.ReadFile(envy.Get("HOME", "") + "/notes/" + file + ".txt")
+	content, err := ioutil.ReadFile(filepath.Join(userHome(), "notes", file+".txt"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -163,7 +177,7 @@ func topicModelling(tokens []string) map[string]int {
 func sendToDatabase(document string, token map[string]int) {
 	sqlStmt := `INSERT INTO tokens(token, document, count) VALUES ($1, $2, $3) ON CONFLICT(token, document) DO UPDATE SET count=$3`
 
-	db, err := sql.Open("sqlite3", envy.Get("HOME", "")+"/notes/note.db")
+	db, err := sql.Open("sqlite3", filepath.Join(userHome(), "notes", "note.db"))
 	if err != nil {
 		log.Fatal(err)
 	}
