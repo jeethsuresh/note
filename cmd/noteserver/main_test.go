@@ -93,7 +93,10 @@ func TestRegister_happyPath(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("want 201 got %d %s", rec.Code, rec.Body.String())
 	}
-	if _, err := os.Stat(s.pubkeyPath("carol")); err != nil {
+	if _, err := os.Stat(s.identityPubPath("carol")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(s.authorizedDevicesPath("carol")); err != nil {
 		t.Fatal(err)
 	}
 	// duplicate
@@ -148,6 +151,34 @@ func TestNotes_roundTrip(t *testing.T) {
 	}
 	if getRec.Header().Get("Last-Modified") == "" {
 		t.Fatal("missing Last-Modified")
+	}
+}
+
+func TestWipeAllUsers(t *testing.T) {
+	dir, err := ioutil.TempDir("", "noteserver-wipe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	userDir := filepath.Join(dir, "users", "alice")
+	if err := os.MkdirAll(userDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := ioutil.WriteFile(filepath.Join(userDir, "note.txt"), []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ioutil.WriteFile(filepath.Join(userDir, "identity.pub"), []byte("Zm9v\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := wipeAllUsers(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "users", "alice")); !os.IsNotExist(err) {
+		t.Fatalf("expected alice removed: %v", err)
+	}
+	fi, err := os.Stat(filepath.Join(dir, "users"))
+	if err != nil || !fi.IsDir() {
+		t.Fatalf("users dir missing or not directory: %v", err)
 	}
 }
 

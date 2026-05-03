@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 
-	"code.8labs.io/jsuresh/note/internal/auth"
 	"code.8labs.io/jsuresh/note/internal/paths"
 	"code.8labs.io/jsuresh/note/sync"
 	"github.com/spf13/cobra"
@@ -19,7 +18,7 @@ var syncCmd = &cobra.Command{
 	Long: `
 		Usage: note sync [--truth merge|server|client|lastwrite]
 
-Requires ~/.note.yaml server and user from "note login".
+Requires ~/.note.yaml (server, user, identity keys) and local ~/notes/note_device_ed25519 from "note login" on this machine.
 `,
 	RunE: runSync,
 }
@@ -38,12 +37,14 @@ func runSync(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	privPath, _ := paths.KeyPaths(notesDir)
-	priv, err := auth.LoadPrivateKey(privPath)
+	userPriv, devicePriv, err := resolveKeyPairs(notesDir, false)
 	if err != nil {
-		return fmt.Errorf("load private key: %w (run note login)", err)
+		return fmt.Errorf("keys: %w", err)
 	}
-	cl := &sync.Client{BaseURL: server, User: user, Priv: priv}
+	if err := persistKeyFilesIfMissing(notesDir, userPriv, devicePriv); err != nil {
+		return err
+	}
+	cl := &sync.Client{BaseURL: server, User: user, DevicePriv: devicePriv}
 	if err := sync.Run(cl, sync.Options{NotesDir: notesDir, Truth: truth}); err != nil {
 		return err
 	}

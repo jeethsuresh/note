@@ -53,23 +53,70 @@ func Verify(pub ed25519.PublicKey, method, urlPath string, body []byte, unix int
 	return nil
 }
 
+// WriteKeyPair writes legacy note_id_ed25519 files (migration / tests).
+func WriteKeyPair(notesDir string, priv ed25519.PrivateKey) error {
+	privPath, pubPath := paths.KeyPaths(notesDir)
+	pub := priv.Public().(ed25519.PublicKey)
+	if err := ioutil.WriteFile(privPath, priv, 0600); err != nil {
+		return err
+	}
+	return ioutil.WriteFile(pubPath, pub, 0644)
+}
+
+// WriteUserKeyPair writes identity key files under notesDir.
+func WriteUserKeyPair(notesDir string, priv ed25519.PrivateKey) error {
+	privPath, pubPath := paths.UserKeyPaths(notesDir)
+	pub := priv.Public().(ed25519.PublicKey)
+	if err := ioutil.WriteFile(privPath, priv, 0600); err != nil {
+		return err
+	}
+	return ioutil.WriteFile(pubPath, pub, 0644)
+}
+
+// WriteDeviceKeyPair writes device signing key files under notesDir.
+func WriteDeviceKeyPair(notesDir string, priv ed25519.PrivateKey) error {
+	privPath, pubPath := paths.DeviceKeyPaths(notesDir)
+	pub := priv.Public().(ed25519.PublicKey)
+	if err := ioutil.WriteFile(privPath, priv, 0600); err != nil {
+		return err
+	}
+	return ioutil.WriteFile(pubPath, pub, 0644)
+}
+
 // EnsureKeyPair creates an Ed25519 keypair beside the notes DB if missing.
 func EnsureKeyPair(notesDir string) (ed25519.PrivateKey, error) {
-	privPath, pubPath := paths.KeyPaths(notesDir)
+	privPath, _ := paths.KeyPaths(notesDir)
 	if _, err := os.Stat(privPath); os.IsNotExist(err) {
-		pub, priv, err := ed25519.GenerateKey(nil)
+		_, priv, err := ed25519.GenerateKey(nil)
 		if err != nil {
 			return nil, err
 		}
-		if err := ioutil.WriteFile(privPath, priv, 0600); err != nil {
-			return nil, err
-		}
-		if err := ioutil.WriteFile(pubPath, pub, 0644); err != nil {
+		if err := WriteKeyPair(notesDir, priv); err != nil {
 			return nil, err
 		}
 		return priv, nil
 	}
 	return LoadPrivateKey(privPath)
+}
+
+// PrivateKeyBase64 encodes a private key (32-byte seed or 64-byte expanded form) as standard base64.
+func PrivateKeyBase64(priv ed25519.PrivateKey) string {
+	return base64.StdEncoding.EncodeToString(priv.Seed())
+}
+
+// ParsePrivateKeyBase64 decodes a standard base64-encoded Ed25519 seed (32 bytes) or full private key (64 bytes).
+func ParsePrivateKeyBase64(s string) (ed25519.PrivateKey, error) {
+	b, err := base64.StdEncoding.DecodeString(strings.TrimSpace(s))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) == ed25519.PrivateKeySize {
+		return ed25519.PrivateKey(b), nil
+	}
+	if len(b) == ed25519.SeedSize {
+		return ed25519.NewKeyFromSeed(b), nil
+	}
+	return nil, fmt.Errorf("unexpected private key size %d", len(b))
 }
 
 // LoadPrivateKey reads a 64-byte seed+pub private key file or 32-byte seed (extended on load).
@@ -116,18 +163,49 @@ func ParsePublicKeyBase64(s string) (ed25519.PublicKey, error) {
 	return ed25519.PublicKey(b), nil
 }
 
-// RegisterPayload is the JSON body for POST /v1/register.
+// RegisterPayload is the JSON body for POST /v1/register (new dual-key clients).
 type RegisterPayload struct {
-	User      string `json:"user"`
-	PublicKey string `json:"public_key"`
-	Password  string `json:"password"`
+	User            string `json:"user"`
+	UserPublicKey   string `json:"user_public_key,omitempty"`
+	DevicePublicKey string `json:"device_public_key,omitempty"`
+	PublicKey       string `json:"public_key,omitempty"` // legacy single-key registration
+	Password        string `json:"password"`
 }
 
+// RegisterDevicePayload is the JSON body for POST /v1/register-device.
+type RegisterDevicePayload struct {
+	User            string `json:"user"`
+	DevicePublicKey string `json:"device_public_key"`
+	Password        string `json:"password"`
+}
+
+// RegisterUserJSON builds the body for creating a new account with identity + device keys.
+func RegisterUserJSON(user string, userPub, devicePub ed25519.PublicKey, adminPassword string) ([]byte, error) {
+	p := RegisterPayload{
+		User:            user,
+		UserPublicKey:   PublicKeyBase64(userPub),
+		DevicePublicKey: PublicKeyBase64(devicePub),
+		Password:        adminPassword,
+	}
+	return json.Marshal(p)
+}
+
+// RegisterJSON builds a legacy registration body (same pubkey used for identity and first device).
 func RegisterJSON(user string, pub ed25519.PublicKey, adminPassword string) ([]byte, error) {
 	p := RegisterPayload{
 		User:      user,
 		PublicKey: PublicKeyBase64(pub),
 		Password:  adminPassword,
+	}
+	return json.Marshal(p)
+}
+
+// RegisterDeviceJSON builds the body for adding a device to an existing account.
+func RegisterDeviceJSON(user string, devicePub ed25519.PublicKey, adminPassword string) ([]byte, error) {
+	p := RegisterDevicePayload{
+		User:            user,
+		DevicePublicKey: PublicKeyBase64(devicePub),
+		Password:        adminPassword,
 	}
 	return json.Marshal(p)
 }

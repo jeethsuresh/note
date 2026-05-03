@@ -2,6 +2,8 @@ package auth
 
 import (
 	"crypto/ed25519"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"testing"
 	"time"
@@ -31,6 +33,29 @@ func TestSignVerifyRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPrivateKeyBase64RoundTrip(t *testing.T) {
+	_, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := PrivateKeyBase64(priv)
+	got, err := ParsePrivateKeyBase64(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if subtle.ConstantTimeCompare(priv.Seed(), got.Seed()) != 1 {
+		t.Fatal("seed mismatch after round trip")
+	}
+	full := base64.StdEncoding.EncodeToString(priv)
+	got2, err := ParsePrivateKeyBase64(full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if subtle.ConstantTimeCompare(priv, got2) != 1 {
+		t.Fatal("full private key mismatch after round trip")
+	}
+}
+
 func TestRegisterJSONShape(t *testing.T) {
 	pub := make(ed25519.PublicKey, ed25519.PublicKeySize)
 	b, err := RegisterJSON("alice", pub, "secret")
@@ -42,6 +67,23 @@ func TestRegisterJSONShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	if p.User != "alice" || p.Password != "secret" || p.PublicKey == "" {
+		t.Fatalf("unexpected payload: %+v", p)
+	}
+}
+
+func TestRegisterUserJSONShape(t *testing.T) {
+	up := make(ed25519.PublicKey, ed25519.PublicKeySize)
+	dp := make(ed25519.PublicKey, ed25519.PublicKeySize)
+	dp[0] = 1
+	b, err := RegisterUserJSON("alice", up, dp, "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p RegisterPayload
+	if err := json.Unmarshal(b, &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.User != "alice" || p.Password != "secret" || p.UserPublicKey == "" || p.DevicePublicKey == "" || p.PublicKey != "" {
 		t.Fatalf("unexpected payload: %+v", p)
 	}
 }

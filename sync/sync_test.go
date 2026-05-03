@@ -48,7 +48,15 @@ func (s *fakeServer) register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	pub, err := auth.ParsePublicKeyBase64(body.PublicKey)
+	keyMaterial := strings.TrimSpace(body.DevicePublicKey)
+	if keyMaterial == "" {
+		keyMaterial = strings.TrimSpace(body.PublicKey)
+	}
+	if keyMaterial == "" {
+		http.Error(w, "missing device public key", http.StatusBadRequest)
+		return
+	}
+	pub, err := auth.ParsePublicKeyBase64(keyMaterial)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -199,12 +207,13 @@ func TestSyncRoundTrip(t *testing.T) {
 	defer cleanup()
 
 	fs := newFakeServer(t)
-	pub, priv, err := ed25519.GenerateKey(nil)
+	_, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	devPub := priv.Public().(ed25519.PublicKey)
 	fs.mu.Lock()
-	fs.keys["alice"] = pub
+	fs.keys["alice"] = devPub
 	fs.mu.Unlock()
 	if err := os.MkdirAll(fs.userDir("alice"), 0755); err != nil {
 		t.Fatal(err)
@@ -222,7 +231,7 @@ func TestSyncRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cl := &Client{BaseURL: srv.URL, User: "alice", Priv: priv}
+	cl := &Client{BaseURL: srv.URL, User: "alice", DevicePriv: priv}
 	if err := Run(cl, Options{NotesDir: notesDir, Truth: TruthServer}); err != nil {
 		t.Fatal(err)
 	}
@@ -263,12 +272,17 @@ func TestRegisterClient(t *testing.T) {
 	if err := os.MkdirAll(notesDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	priv, err := auth.EnsureKeyPair(notesDir)
+	userPriv, err := auth.EnsureKeyPair(notesDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pub := priv.Public().(ed25519.PublicKey)
-	if err := Register(srv.URL, "bob", "adminpw", pub); err != nil {
+	_, devicePriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	userPub := userPriv.Public().(ed25519.PublicKey)
+	devicePub := devicePriv.Public().(ed25519.PublicKey)
+	if err := RegisterUser(srv.URL, "bob", "adminpw", userPub, devicePub); err != nil {
 		t.Fatal(err)
 	}
 	fs.mu.Lock()
