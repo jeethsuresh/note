@@ -14,6 +14,7 @@ import (
 	"code.8labs.io/jsuresh/note/sync"
 	homedir "github.com/mitchellh/go-homedir"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	yaml "gopkg.in/yaml.v2"
 )
 
@@ -26,7 +27,9 @@ var (
 var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Configure server identity, register, and verify signing",
-	Long: `Register with --password (admin) on first use to create the account or add this device's key,
+	Long: `With ~/.note.yaml (or --config) already containing server and user, you may run login with no flags to add this machine: identity keys come from the file, a local device key is created if missing, and --password or NOTE_ADMIN_PASSWORD registers that device via POST /v1/register-device (not account creation).
+
+Register with --password (admin) on first use to create the account or add this device's key,
 or omit --password to only verify keys and reachability.
 
 Writes server, user, and identity keys (user_private_key / user_public_key) to ~/.note.yaml or --config — safe to copy across your machines.
@@ -37,8 +40,18 @@ The server stores identity.pub plus each device line in authorized_devices; HTTP
 }
 
 func runLogin(cmd *cobra.Command, args []string) error {
+	if strings.TrimSpace(loginServer) == "" {
+		loginServer = strings.TrimSpace(viper.GetString("server"))
+	}
+	if strings.TrimSpace(loginUser) == "" {
+		loginUser = strings.TrimSpace(viper.GetString("user"))
+	}
 	if strings.TrimSpace(loginServer) == "" || strings.TrimSpace(loginUser) == "" {
-		return fmt.Errorf("--server and --user are required")
+		return fmt.Errorf("missing server or user: set --server and --user, or add server and user to ~/.note.yaml")
+	}
+	effectivePassword := strings.TrimSpace(loginPassword)
+	if effectivePassword == "" {
+		effectivePassword = strings.TrimSpace(os.Getenv("NOTE_ADMIN_PASSWORD"))
 	}
 	notesDir, err := paths.NotesDir()
 	if err != nil {
@@ -47,6 +60,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	if err := os.MkdirAll(notesDir, 0755); err != nil {
 		return err
 	}
+	existingIdentity := userIdentityKeyConfigured(notesDir)
 	userPriv, devicePriv, err := resolveKeyPairs(notesDir, true)
 	if err != nil {
 		return err
@@ -59,13 +73,19 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	}
 	userPub := userPriv.Public().(ed25519.PublicKey)
 	devicePub := devicePriv.Public().(ed25519.PublicKey)
-	if loginPassword != "" {
-		err := sync.RegisterUser(strings.TrimRight(loginServer, "/"), loginUser, loginPassword, userPub, devicePub)
-		if errors.Is(err, sync.ErrUserAlreadyExists) {
-			err = sync.RegisterDevice(strings.TrimRight(loginServer, "/"), loginUser, loginPassword, devicePub)
+	if effectivePassword != "" {
+		base := strings.TrimRight(loginServer, "/")
+		var regErr error
+		if existingIdentity {
+			regErr = sync.RegisterDevice(base, loginUser, effectivePassword, devicePub)
+		} else {
+			regErr = sync.RegisterUser(base, loginUser, effectivePassword, userPub, devicePub)
+			if errors.Is(regErr, sync.ErrUserAlreadyExists) {
+				regErr = sync.RegisterDevice(base, loginUser, effectivePassword, devicePub)
+			}
 		}
-		if err != nil {
-			return err
+		if regErr != nil {
+			return regErr
 		}
 	}
 	cl := &sync.Client{
@@ -120,6 +140,6 @@ func writeLoginConfig(server, user string, userPriv ed25519.PrivateKey) error {
 func init() {
 	loginCmd.Flags().StringVar(&loginServer, "server", "", "note server base URL (e.g. http://127.0.0.1:8080)")
 	loginCmd.Flags().StringVar(&loginUser, "user", "", "username on the server")
-	loginCmd.Flags().StringVar(&loginPassword, "password", "", "admin password for POST /v1/register and /v1/register-device")
+	loginCmd.Flags().StringVar(&loginPassword, "password", "", "admin password for POST /v1/register and /v1/register-device (if empty, NOTE_ADMIN_PASSWORD is used)")
 	rootCmd.AddCommand(loginCmd)
 }

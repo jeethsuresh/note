@@ -47,6 +47,21 @@ func verifyOptionalUserPub(priv ed25519.PrivateKey) error {
 
 // loadUserPrivate reads the stable identity key from ~/.note.yaml (user_private_key or legacy private_key),
 // then note_user_ed25519, then legacy note_id_ed25519 when note_user is absent.
+// userIdentityKeyConfigured reports whether a user identity key is already present
+// in config (viper) or on-disk user key files, so login adds a device rather than creating a new account.
+func userIdentityKeyConfigured(notesDir string) bool {
+	if strings.TrimSpace(viper.GetString("user_private_key")) != "" ||
+		strings.TrimSpace(viper.GetString("private_key")) != "" {
+		return true
+	}
+	up, _ := paths.UserKeyPaths(notesDir)
+	if fileExists(up) {
+		return true
+	}
+	legacyPriv, _ := paths.KeyPaths(notesDir)
+	return fileExists(legacyPriv)
+}
+
 func loadUserPrivate(notesDir string) (ed25519.PrivateKey, bool, error) {
 	s := strings.TrimSpace(viper.GetString("user_private_key"))
 	if s == "" {
